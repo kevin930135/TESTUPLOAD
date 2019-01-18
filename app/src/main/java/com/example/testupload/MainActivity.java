@@ -1,199 +1,163 @@
 package com.example.testupload;
 
-import android.app.Activity;
-import android.app.ProgressDialog;
-import android.content.Intent;
-import android.database.Cursor;
-import android.net.Uri;
-import android.os.AsyncTask;
-import android.os.Build;
-import android.provider.MediaStore;
-import android.support.v7.app.AppCompatActivity;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+
+import org.apache.http.HttpResponse;
+import org.apache.http.HttpStatus;
+import org.apache.http.client.ClientProtocolException;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.mime.MultipartEntity;
+import org.apache.http.entity.mime.content.ContentBody;
+import org.apache.http.entity.mime.content.FileBody;
+import org.apache.http.impl.client.DefaultHttpClient;
+import org.json.JSONException;
+import org.json.JSONObject;
+import org.json.JSONTokener;
+
+import android.Manifest;
 import android.os.Bundle;
+import android.os.Environment;
+import android.os.Handler;
+import android.app.Activity;
+import android.support.v4.content.ContextCompat;
 import android.util.Log;
+import android.view.Menu;
 import android.view.View;
+import android.view.View.OnClickListener;
 import android.widget.Button;
+import android.widget.TextView;
 import android.widget.Toast;
 
-import java.io.BufferedReader;
-import java.io.DataOutputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
+import pub.devrel.easypermissions.EasyPermissions;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends Activity{
+    private String imagePath;//將要上傳的圖片路徑
+    private Handler handler;//將要綁定到創建他的線程中(通常是位於主線程)
+    private MultipartEntity multipartEntity;
+    private Boolean isUpload = false;//推斷是否上傳成功
+    private TextView tv;
+    private String sImagePath;//server端返回路徑
+    private static final String[] LOCATION_AND_CONTACTS =
+            {Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.READ_CONTACTS};
 
-    private String upload_path;
-    ProgressDialog pDialog;
 
-    int serverResponseCode = 0;
-    private FileInputStream fileInputStream;
 
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        imagePath = "/sdcard/Download/11.jpg";
 
-        pDialog = new ProgressDialog(this);
 
-        Button btn_upload =  findViewById(R.id.btn_upload);
-        btn_upload.setOnClickListener(new View.OnClickListener() {
+        handler = new Handler();//綁定到主線程中
+        String url = "http://c79d11c7.ngrok.io/upload";
+        url = url.replaceAll("/","%2F");
+        Button btn = (Button) findViewById(R.id.button1);
+        btn.setOnClickListener(new OnClickListener() {
+
             @Override
-            public void onClick(View v) {
+            public void onClick(View arg0) {
 
-                Intent intent = new Intent(Intent.ACTION_PICK,
-                        android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
-                startActivityForResult(intent, 0);
+
+
+// TODO Auto-generated method stub
+
+
+                new Thread() {
+                    public void run() {
+                        File file = new File(imagePath);
+                        multipartEntity = new MultipartEntity();
+                        ContentBody contentBody = new FileBody(file,
+                                "image/jpeg");
+                        multipartEntity.addPart("filename", contentBody);
+                        HttpPost httpPost = new HttpPost(
+                                "http://c79d11c7.ngrok.io/upload");
+                        httpPost.setEntity(multipartEntity);
+                        HttpClient httpClient = new DefaultHttpClient();
+                        try {
+                            HttpResponse httpResponse = httpClient
+                                    .execute(httpPost);
+                            InputStream in = httpResponse.getEntity()
+                                    .getContent();
+                            String content = readString(in);
+                            int httpStatus = httpResponse.getStatusLine()
+                                    .getStatusCode();//獲取通信狀態
+                            if (httpStatus == HttpStatus.SC_OK) {
+                                JSONObject jsonObject = parseJSON(content);//解析字符串為JSON對象
+                                String status = jsonObject.getString("status");//獲取上傳狀態
+                                sImagePath = jsonObject.getString("path");
+                                Log.d("MSG", status);
+                                if (status.equals("true")) {
+                                    isUpload = true;
+                                }
+                            }
+                            Log.d("MSG", content);
+                            Log.d("MSG", "Upload Success");
+                        } catch (ClientProtocolException e) {
+// TODO Auto-generated catch block
+                            e.printStackTrace();
+                        } catch (IOException e) {
+// TODO Auto-generated catch block
+                            e.printStackTrace();
+                        } catch (Exception e) {
+// TODO Auto-generated catch block
+                            e.printStackTrace();
+                        }
+                        handler.post(new Runnable() {
+
+                            @Override
+                            public void run() {
+// TODO Auto-generated method stub
+                                if (isUpload) {
+                                    tv = (TextView)findViewById(R.id.textView1);
+                                    tv.setText(sImagePath);
+                                    Toast.makeText(MainActivity.this, "上傳成功",
+                                            Toast.LENGTH_SHORT).show();
+                                } else {
+                                    Toast.makeText(MainActivity.this, "上傳失敗",
+                                            Toast.LENGTH_SHORT).show();
+                                }
+                            }
+                        });
+                    }
+                }.start();
             }
         });
 
     }
 
-    @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-
-        if (resultCode == RESULT_OK) {
-
-            Uri selectedImageUri = data.getData();
-            upload_path = GetGalleryPath(selectedImageUri, this);
-            Upload();
+    protected String readString(InputStream in) throws Exception {
+        byte[] data = new byte[1024];
+        int length = 0;
+        ByteArrayOutputStream bout = new ByteArrayOutputStream();
+        while ((length = in.read(data)) != -1) {
+            bout.write(data, 0, length);
         }
+        return new String(bout.toByteArray(), "GBK");
     }
 
-    public static String GetGalleryPath(Uri uri, Activity activity) {
-        String[] projection = { MediaStore.Images.Media.DATA };
-        @SuppressWarnings("deprecation")
-        Cursor cursor = activity.managedQuery(uri, projection, null, null, null);
-        int column_index = cursor
-                .getColumnIndexOrThrow(MediaStore.Images.Media.DATA);
-        cursor.moveToFirst();
-        return cursor.getString(column_index);
-    }
-
-
-    private void Upload() {
-
+    protected JSONObject parseJSON(String str) {
+        JSONTokener jsonParser = new JSONTokener(str);
+        JSONObject result = null;
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
-                new UploadFile().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, "your api link");
-            } else {
-                new UploadFile().execute("your api link");
-            }
-        } catch (Exception e) {
+            result = (JSONObject) jsonParser.nextValue();
+        } catch (JSONException e) {
 // TODO Auto-generated catch block
             e.printStackTrace();
         }
+        return result;
     }
 
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+// Inflate the menu; this adds items to the action bar if it is present.
 
-    private class UploadFile extends AsyncTask<String, Void, Void> {
-
-        String fileName = upload_path;
-        HttpURLConnection conn = null;
-        DataOutputStream dos = null;
-        String lineEnd = "\r\n";
-        String twoHyphens = "--";
-        String boundary = "*****";
-        int bytesRead, bytesAvailable, bufferSize;
-        byte[] buffer;
-        int maxBufferSize = 1 * 1024 * 1024;
-        File sourceFile = new File(upload_path);
-        private String Content;
-        private String Error = null;
-
-        protected void onPreExecute() {
-
-            pDialog.show();
-        }
-
-        protected Void doInBackground(String... urls) {
-            BufferedReader reader = null;
-            if (!sourceFile.isFile()) {
-
-                pDialog.dismiss();
-
-                Log.e("uploadFile", "Source File not exist");
-
-
-            } else {
-                try {
-                    fileInputStream = new FileInputStream(sourceFile);
-
-                    URL url = new URL(urls[0]);
-
-                    conn = (HttpURLConnection) url.openConnection();
-                    conn.setDoInput(true);
-                    conn.setDoOutput(true);
-                    conn.setUseCaches(false);
-                    conn.setRequestMethod("POST");
-                    conn.setRequestProperty("Connection", "Keep-Alive");
-                    conn.setRequestProperty("ENCTYPE", "multipart/form-data");
-                    conn.setRequestProperty("Content-Type", "multipart/form-data;boundary=" + boundary);
-                    conn.setRequestProperty("uploaded_file", fileName);
-
-                    dos = new DataOutputStream(conn.getOutputStream());
-
-                    dos.writeBytes(twoHyphens + boundary + lineEnd);
-
-                    dos.writeBytes("Content-Disposition: form-data; name=\"uploaded_file\";filename=\"" + fileName + "\"" + lineEnd);
-                    dos.writeBytes(lineEnd);
-
-                    bytesAvailable = fileInputStream.available();
-
-                    bufferSize = Math.min(bytesAvailable, maxBufferSize);
-                    buffer = new byte[bufferSize];
-
-                    bytesRead = fileInputStream.read(buffer, 0, bufferSize);
-
-                    while (bytesRead > 0) {
-
-                        dos.write(buffer, 0, bufferSize);
-                        bytesAvailable = fileInputStream.available();
-                        bufferSize = Math.min(bytesAvailable, maxBufferSize);
-                        bytesRead = fileInputStream.read(buffer, 0, bufferSize);
-
-                    }
-                    dos.writeBytes(lineEnd);
-                    dos.writeBytes(twoHyphens + boundary + twoHyphens + lineEnd);
-                    serverResponseCode = conn.getResponseCode();
-                    Content = conn.getResponseMessage();
-
-
-                } catch (Exception ex) {
-                    Error = ex.getMessage();
-                } finally {
-                    try {
-                        reader.close();
-                    } catch (Exception ex) {
-                    }
-                }
-            }
-            return null;
-        }
-
-        protected void onPostExecute(Void unused) {
-            pDialog.dismiss();
-
-            try {
-
-                if (Content != null) {
-
-                    Toast.makeText(getApplicationContext(),Content,Toast.LENGTH_SHORT).show();
-                    if(Content.equalsIgnoreCase("OK")){
-
-                        Toast.makeText(getApplicationContext(),"Your file uploaded successfully",Toast.LENGTH_SHORT).show();
-
-                    }
-
-                }
-            } catch (Exception e) {
-// TODO Auto-generated catch block
-                e.printStackTrace();
-            }
-        }
-
+        return true;
     }
 
 }
